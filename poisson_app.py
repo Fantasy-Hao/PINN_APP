@@ -1,5 +1,5 @@
 """
-Adam Optimization.
+APP Optimization.
 Two dimensional Poisson equation example. Solution given by
 
 u(x,y) = sin(pi*x) * sin(pi*y).
@@ -10,7 +10,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
+from scipy.stats import qmc, norm
+
+from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('./logs'):
@@ -111,8 +113,77 @@ def exact_solution(x, y):
     return torch.sin(np.pi * x) * torch.sin(np.pi * y)
 
 
+# Loss function calculation
+def loss_fun(model, params, inputs, target):
+    # Save original parameters
+    original_params = get_model_params(model).clone()
+
+    # Set new parameters
+    params_tensor = torch.tensor(params, dtype=torch.float64, device=device)
+    set_model_params(model, params_tensor)
+
+    # Calculate loss
+    x_domain, y_domain, x_boundary, y_boundary = inputs
+
+    # Calculate PDE residual loss
+    f_pred = model.f(x_domain, y_domain)
+    loss_f = torch.mean(torch.square(f_pred))
+
+    # Calculate boundary condition loss
+    u_boundary = model(x_boundary, y_boundary)
+    loss_bc = torch.mean(torch.square(u_boundary))
+
+    # Total loss
+    loss = loss_f + loss_bc
+
+    # Restore original parameters
+    set_model_params(model, original_params)
+
+    return loss.item()
+
+
+# APP optimization algorithm
+def app(model, inputs, target, K, lambda_, rho, n):
+    params = get_model_params(model)
+    d = len(params)
+    xk = params.detach().cpu().numpy().astype(np.float64)  # Added .cpu() before .numpy()
+    loss_history = []
+    alpha = lambda_
+
+    halton = qmc.Halton(d=d, scramble=True, seed=42)
+    fc = np.inf
+    for i in range(K):
+        # Generate n random vectors from Halton sequence
+        x = halton.random(n)
+        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
+
+        # Compute function value sequence
+        f = [loss_fun(model, t[k], inputs, target) for k in range(n + 1)]
+        fk = f[0]
+        f_min = min(f)
+        fc = min(fc, f_min)
+        f = np.array(f) - f_min
+
+        # Use averaged asymptotic formula
+        f_mean = np.mean(f)
+        if f_mean > 0:
+            f /= f_mean
+
+        # Compute weights and new xk
+        weights = np.exp(-f)
+        xk = np.average(t, axis=0, weights=weights)
+
+        # Update parameters and record
+        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
+        alpha /= rho
+        loss_history.append(fk)
+        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
+
+    return loss_history
+
+
 # Training function
-def train(model, optimizer, epochs=10000, n_points=100):
+def train(model, n_points=100, K=100, lambda_=1.0, rho=1.1, n=10):
     # Create training data
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device)
@@ -135,34 +206,11 @@ def train(model, optimizer, epochs=10000, n_points=100):
     x_boundary = torch.cat([x_boundary_0, x_boundary_1, x_boundary_2, x_boundary_3])
     y_boundary = torch.cat([y_boundary_0, y_boundary_1, y_boundary_2, y_boundary_3])
 
-    # Training loop
-    losses = []
-    for epoch in range(epochs):
-        # Calculate PDE residual loss
-        f_pred = model.f(x_domain, y_domain)
-        loss_f = torch.mean(torch.square(f_pred))
+    # Use APP optimization algorithm
+    inputs = (x_domain, y_domain, x_boundary, y_boundary)
+    target = None  # No target values needed for this problem
 
-        # Calculate boundary condition loss (Dirichlet boundary condition: u=0)
-        u_boundary = model(x_boundary, y_boundary)
-        loss_bc = torch.mean(torch.square(u_boundary))
-
-        # Total loss
-        loss = loss_f + loss_bc
-
-        # Backpropagation and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Record loss
-        losses.append(loss.item())
-
-        # Print training progress
-        if epoch % 1000 == 0:
-            print(
-                f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
-
-    return losses
+    return app(model, inputs, target, K, lambda_, rho, n)
 
 
 # Evaluate and visualize results
@@ -211,7 +259,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/poisson_adam_results.png', dpi=300)
+    plt.savefig('./logs/poisson_app_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -226,12 +274,16 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-
-    # Train model
+    # Use APP optimization algorithm
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(
+        model,
+        n_points=400,
+        K=200,
+        lambda_=1 / np.sqrt(len(get_model_params(model))),
+        rho=0.98,
+        n=len(get_model_params(model))
+    )
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -240,7 +292,7 @@ def main():
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/poisson_adam_loss.png', dpi=300)
+    plt.savefig('./logs/poisson_app_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
@@ -248,8 +300,8 @@ def main():
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
 
     # Save model
-    # torch.save(model.state_dict(), 'poisson_adam_model.pt')
-    # print("Model saved as 'poisson_adam_model.pt'")
+    # torch.save(model.state_dict(), './logs/poisson_app_model.pt')
+    # print("Model saved as './logs/poisson_app_model.pt'")
 
 
 if __name__ == "__main__":

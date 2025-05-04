@@ -1,5 +1,5 @@
 """
-Adam Optimization.
+LBFGS Optimization.
 Two dimensional Poisson equation example. Solution given by
 
 u(x,y) = sin(pi*x) * sin(pi*y).
@@ -112,7 +112,7 @@ def exact_solution(x, y):
 
 
 # Training function
-def train(model, optimizer, epochs=10000, n_points=100):
+def train(model, optimizer, max_iter=1000, n_points=100):
     # Create training data
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device)
@@ -137,31 +137,46 @@ def train(model, optimizer, epochs=10000, n_points=100):
 
     # Training loop
     losses = []
-    for epoch in range(epochs):
+    iteration = 0
+    
+    # Define closure function for LBFGS
+    def closure():
+        nonlocal iteration
+        
+        # Zero gradients
+        optimizer.zero_grad()
+        
         # Calculate PDE residual loss
         f_pred = model.f(x_domain, y_domain)
         loss_f = torch.mean(torch.square(f_pred))
-
+        
         # Calculate boundary condition loss (Dirichlet boundary condition: u=0)
         u_boundary = model(x_boundary, y_boundary)
         loss_bc = torch.mean(torch.square(u_boundary))
-
+        
         # Total loss
         loss = loss_f + loss_bc
-
-        # Backpropagation and optimization
-        optimizer.zero_grad()
+        
+        # Backward pass
         loss.backward()
-        optimizer.step()
-
+        
+        # Print training progress
+        if iteration % 100 == 0:
+            print(
+                f'LBFGS - Iteration {iteration}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+        
         # Record loss
         losses.append(loss.item())
-
-        # Print training progress
-        if epoch % 1000 == 0:
-            print(
-                f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
-
+        
+        # Increment iteration counter
+        iteration += 1
+        
+        return loss
+    
+    # Run optimization
+    for i in range(max_iter):
+        optimizer.step(closure)
+    
     return losses
 
 
@@ -211,7 +226,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/poisson_adam_results.png', dpi=300)
+    plt.savefig('./logs/poisson_lbfgs_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -226,12 +241,18 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # Define optimizer - LBFGS
+    optimizer = optim.LBFGS(model.parameters(),
+                            lr=1.0,
+                            max_iter=20,
+                            history_size=50,
+                            tolerance_grad=1e-5,
+                            tolerance_change=1e-7,
+                            line_search_fn="strong_wolfe")
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(model, optimizer, max_iter=2000, n_points=800)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -240,7 +261,7 @@ def main():
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/poisson_adam_loss.png', dpi=300)
+    plt.savefig('./logs/poisson_lbfgs_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
@@ -248,8 +269,8 @@ def main():
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
 
     # Save model
-    # torch.save(model.state_dict(), 'poisson_adam_model.pt')
-    # print("Model saved as 'poisson_adam_model.pt'")
+    # torch.save(model.state_dict(), 'poisson_lbfgs_model.pt')
+    # print("Model saved as 'poisson_lbfgs_model.pt'")
 
 
 if __name__ == "__main__":

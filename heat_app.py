@@ -1,5 +1,5 @@
 """
-Adam Optimization.
+APP Optimization.
 Heat equation example. Solution given by
 
 u(x,t) = sin(pi*x) * exp(-pi^2*t).
@@ -10,7 +10,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
+from scipy.stats import qmc, norm
+
+from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('./logs'):
@@ -21,7 +23,7 @@ torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Random seed
-seed = 0
+seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -47,7 +49,7 @@ class MLP(nn.Module):
         return x
 
 
-# Define PINN model for heat equation
+# Define PINN model
 class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
@@ -103,8 +105,82 @@ def exact_solution(x, t):
     return torch.sin(np.pi * x) * torch.exp(-np.pi ** 2 * t)
 
 
+# Loss function calculation
+def loss_fun(model, params, inputs, target):
+    # Save original parameters
+    original_params = get_model_params(model).clone()
+
+    # Set new parameters
+    params_tensor = torch.tensor(params, dtype=torch.float64, device=device)
+    set_model_params(model, params_tensor)
+
+    # Calculate loss
+    x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
+
+    # Calculate PDE residual loss
+    f_pred = model.f(x_domain, t_domain)
+    loss_f = torch.mean(torch.square(f_pred))
+
+    # Calculate initial condition loss (u(x,0) = sin(πx))
+    u_initial_pred = model(x_initial, t_initial)
+    u_initial_true = torch.sin(model.pi * x_initial)
+    loss_initial = torch.mean(torch.square(u_initial_pred - u_initial_true))
+
+    # Calculate boundary condition loss (u(0,t) = u(1,t) = 0)
+    u_boundary = model(x_boundary, t_boundary)
+    loss_bc = torch.mean(torch.square(u_boundary))
+
+    # Total loss
+    loss = loss_f + loss_initial + loss_bc
+
+    # Restore original parameters
+    set_model_params(model, original_params)
+
+    return loss.item()
+
+
+# APP optimization algorithm
+def app(model, inputs, target, K, lambda_, rho, n):
+    params = get_model_params(model)
+    d = len(params)
+    xk = params.detach().cpu().numpy().astype(np.float64)
+    loss_history = []
+    alpha = lambda_
+
+    halton = qmc.Halton(d=d, scramble=True, seed=42)
+    fc = np.inf
+    for i in range(K):
+        # Generate n random vectors from Halton sequence
+        x = halton.random(n)
+        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
+
+        # Compute function value sequence
+        f = [loss_fun(model, t[k], inputs, target) for k in range(n + 1)]
+        fk = f[0]
+        f_min = min(f)
+        fc = min(fc, f_min)
+        f = np.array(f) - f_min
+
+        # Use averaged asymptotic formula
+        f_mean = np.mean(f)
+        if f_mean > 0:
+            f /= f_mean
+
+        # Compute weights and new xk
+        weights = np.exp(-f)
+        xk = np.average(t, axis=0, weights=weights)
+
+        # Update parameters and record
+        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
+        alpha /= rho
+        loss_history.append(fk)
+        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
+
+    return loss_history
+
+
 # Training function
-def train(model, optimizer, epochs, n_points):
+def train(model, n_points, K, lambda_, rho, n):
     # Domain bounds
     x_min, x_max = 0.0, 1.0
     t_min, t_max = 0.0, 1.0
@@ -127,38 +203,11 @@ def train(model, optimizer, epochs, n_points):
     x_boundary = torch.cat([x_boundary_0, x_boundary_1])
     t_boundary = torch.cat([t_boundary[:n_points // 2], t_boundary[n_points // 2:]])
 
-    # Training loop
-    losses = []
-    for epoch in range(epochs):
-        # Calculate PDE residual loss
-        f_pred = model.f(x_domain, t_domain)
-        loss_f = torch.mean(torch.square(f_pred))
+    # Use APP optimization algorithm
+    inputs = (x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary)
+    target = None   # No target values needed for this problem
 
-        # Calculate initial condition loss (u(x,0) = sin(πx))
-        u_initial_pred = model(x_initial, t_initial)
-        u_initial_true = torch.sin(model.pi * x_initial)
-        loss_initial = torch.mean(torch.square(u_initial_pred - u_initial_true))
-
-        # Calculate boundary condition loss (u(0,t) = u(1,t) = 0)
-        u_boundary = model(x_boundary, t_boundary)
-        loss_bc = torch.mean(torch.square(u_boundary))
-
-        # Total loss
-        loss = loss_f + loss_initial + loss_bc
-
-        # Backpropagation and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Record loss
-        losses.append(loss.item())
-
-        # Print training progress
-        if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, IC Loss: {loss_initial.item():.6e}, BC Loss: {loss_bc.item():.6f}')
-
-    return losses
+    return app(model, inputs, target, K, lambda_, rho, n)
 
 
 # Evaluate and visualize results
@@ -213,7 +262,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/heat_adam_results.png', dpi=300)
+    plt.savefig('./logs/heat_app_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -221,20 +270,20 @@ def evaluate_model(model, n_points=100):
     print(f'L2 relative error: {l2_error:.6e}')
 
     # Plot solution at different time steps
-    fig, ax = plt.subplots(figsize=(10, 6))
-    time_steps = [0, 0.25, 0.5, 0.75, 1.0]
-    for i, t in enumerate(time_steps):
-        t_idx = int(t * (n_points-1))
-        ax.plot(x, U_pred[t_idx, :], '--', label=f'PINN t={t}')
-        ax.plot(x, U_exact[t_idx, :], '-', label=f'Exact t={t}')
+    # fig, ax = plt.subplots(figsize=(10, 6))
+    # time_steps = [0, 0.25, 0.5, 0.75, 1.0]
+    # for i, t in enumerate(time_steps):
+    #     t_idx = int(t * (n_points-1))
+    #     ax.plot(x, U_pred[t_idx, :], '--', label=f'PINN t={t}')
+    #     ax.plot(x, U_exact[t_idx, :], '-', label=f'Exact t={t}')
 
-    ax.set_xlabel('x')
-    ax.set_ylabel('u(x,t)')
-    ax.set_title('Solution at Different Time Steps')
-    ax.legend()
-    ax.grid(True)
-    plt.savefig('./logs/heat_adam_time_slices.png', dpi=300)
-    plt.show()
+    # ax.set_xlabel('x')
+    # ax.set_ylabel('u(x,t)')
+    # ax.set_title('Solution at Different Time Steps')
+    # ax.legend()
+    # ax.grid(True)
+    # plt.savefig('./logs/heat_adam_time_slices.png', dpi=300)
+    # plt.show()
 
     return U_pred, U_exact, Error, l2_error
 
@@ -244,12 +293,16 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-
-    # Train model
+    # Use APP optimization algorithm
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(
+        model,
+        n_points=400,
+        K=500,
+        lambda_=1 / np.sqrt(len(get_model_params(model))),
+        rho=0.98,
+        n=len(get_model_params(model))
+    )
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -258,7 +311,7 @@ def main():
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/heat_adam_loss.png', dpi=300)
+    plt.savefig('./logs/heat_app_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
@@ -266,8 +319,8 @@ def main():
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
 
     # Save model
-    # torch.save(model.state_dict(), './logs/heat_adam_model.pt')
-    # print("Model saved as './logs/heat_adam_model.pt'")
+    # torch.save(model.state_dict(), './logs/heat_app_model.pt')
+    # print("Model saved as './logs/heat_app_model.pt'")
 
 
 if __name__ == "__main__":

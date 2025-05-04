@@ -1,5 +1,5 @@
 """
-Adam Optimization.
+L-BFGS Optimization.
 Heat equation example. Solution given by
 
 u(x,t) = sin(pi*x) * exp(-pi^2*t).
@@ -21,7 +21,7 @@ torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Random seed
-seed = 0
+seed = 1234
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -104,7 +104,7 @@ def exact_solution(x, t):
 
 
 # Training function
-def train(model, optimizer, epochs, n_points):
+def train(model, optimizer, epochs=10000, n_points=100):
     # Domain bounds
     x_min, x_max = 0.0, 1.0
     t_min, t_max = 0.0, 1.0
@@ -129,7 +129,12 @@ def train(model, optimizer, epochs, n_points):
 
     # Training loop
     losses = []
-    for epoch in range(epochs):
+    
+    # Define closure function for L-BFGS
+    def closure():
+        # Zero gradients
+        optimizer.zero_grad()
+        
         # Calculate PDE residual loss
         f_pred = model.f(x_domain, t_domain)
         loss_f = torch.mean(torch.square(f_pred))
@@ -145,18 +150,35 @@ def train(model, optimizer, epochs, n_points):
 
         # Total loss
         loss = loss_f + loss_initial + loss_bc
-
-        # Backpropagation and optimization
-        optimizer.zero_grad()
+        
+        # Backward pass
         loss.backward()
-        optimizer.step()
-
+        
+        # Store current loss for printing
+        closure.loss = loss.item()
+        closure.loss_f = loss_f.item()
+        closure.loss_initial = loss_initial.item()
+        closure.loss_bc = loss_bc.item()
+        
+        return loss
+    
+    # Initialize loss values
+    closure.loss = 0.0
+    closure.loss_f = 0.0
+    closure.loss_initial = 0.0
+    closure.loss_bc = 0.0
+    
+    # Training loop
+    for epoch in range(epochs):
+        # Perform optimization step
+        optimizer.step(closure)
+        
         # Record loss
-        losses.append(loss.item())
-
+        losses.append(closure.loss)
+        
         # Print training progress
-        if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, IC Loss: {loss_initial.item():.6e}, BC Loss: {loss_bc.item():.6f}')
+        if epoch % 10 == 0:  # Print more frequently since L-BFGS converges faster
+            print(f'L-BFGS - Epoch {epoch}, Loss: {closure.loss:.6e}, PDE Loss: {closure.loss_f:.6e}, IC Loss: {closure.loss_initial:.6e}, BC Loss: {closure.loss_bc:.6f}')
 
     return losses
 
@@ -213,7 +235,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/heat_adam_results.png', dpi=300)
+    plt.savefig('./logs/heat_lbfgs_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -233,7 +255,7 @@ def evaluate_model(model, n_points=100):
     ax.set_title('Solution at Different Time Steps')
     ax.legend()
     ax.grid(True)
-    plt.savefig('./logs/heat_adam_time_slices.png', dpi=300)
+    plt.savefig('./logs/heat_lbfgs_time_slices.png', dpi=300)
     plt.show()
 
     return U_pred, U_exact, Error, l2_error
@@ -244,21 +266,27 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # Define optimizer - LBFGS
+    optimizer = optim.LBFGS(model.parameters(),
+                            lr=1.0,
+                            max_iter=20,
+                            history_size=50,
+                            tolerance_grad=1e-5,
+                            tolerance_change=1e-7,
+                            line_search_fn="strong_wolfe")
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(model, optimizer, epochs=200, n_points=400)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
     plt.semilogy(losses)
-    plt.title('Training Loss')
+    plt.title('Training Loss (L-BFGS)')
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/heat_adam_loss.png', dpi=300)
+    plt.savefig('./logs/heat_lbfgs_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
@@ -266,8 +294,8 @@ def main():
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
 
     # Save model
-    # torch.save(model.state_dict(), './logs/heat_adam_model.pt')
-    # print("Model saved as './logs/heat_adam_model.pt'")
+    # torch.save(model.state_dict(), './logs/heat_lbfgs_model.pt')
+    # print("Model saved as './logs/heat_lbfgs_model.pt'")
 
 
 if __name__ == "__main__":
