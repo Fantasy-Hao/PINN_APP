@@ -21,7 +21,7 @@ torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Random seed
-seed = 0
+seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -156,7 +156,7 @@ def train(model, optimizer, epochs, n_points):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, IC Loss: {loss_initial.item():.6e}, BC Loss: {loss_bc.item():.6f}')
+            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, IC Loss: {loss_initial.item():.6e}, BC Loss: {loss_bc.item():.6e}')
 
     return losses
 
@@ -249,7 +249,7 @@ def main():
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(model, optimizer, epochs=20400, n_points=1600)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))

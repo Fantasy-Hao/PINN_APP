@@ -23,7 +23,7 @@ torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Random seed
-seed = 0
+seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -54,7 +54,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 128, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -215,7 +215,7 @@ def train_adam(model, inputs, n_epochs, learning_rate):
         losses.append(loss.item())
         
         # Print training progress
-        if epoch % 100 == 0:
+        if epoch % 1000 == 0:
             print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}')
     
     return losses
@@ -336,7 +336,7 @@ def main():
         inputs=inputs,
         K=400,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
+        rho=0.986,
         n=len(get_model_params(model))
     )
 

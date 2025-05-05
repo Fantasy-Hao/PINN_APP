@@ -213,7 +213,7 @@ def train_adam(model, inputs, n_epochs, learning_rate):
         losses.append(loss.item())
         
         # Print training progress
-        if epoch % 100 == 0:
+        if epoch % 1000 == 0:
             print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
     
     return losses
@@ -313,7 +313,7 @@ def main():
     model = PINN().to(device)
 
     # Create training data
-    n_points = 800
+    n_points = 1600
 
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device)
@@ -346,7 +346,7 @@ def main():
         inputs=inputs,
         K=400,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
+        rho=0.96,
         n=len(get_model_params(model))
     )
 

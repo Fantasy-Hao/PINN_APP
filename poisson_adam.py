@@ -159,8 +159,7 @@ def train(model, optimizer, epochs=10000, n_points=100):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(
-                f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
 
     return losses
 
@@ -231,7 +230,7 @@ def main():
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(model, optimizer, epochs=20400, n_points=400)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
