@@ -318,10 +318,6 @@ def main():
     print("Evaluating model...")
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
 
-    # Save model
-    # torch.save(model.state_dict(), './logs/heat_app_model.pt')
-    # print("Model saved as './logs/heat_app_model.pt'")
-
 
 if __name__ == "__main__":
     main()

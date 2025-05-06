@@ -21,7 +21,7 @@ torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Random seed
-seed = 1234
+seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -52,7 +52,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 64, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -178,7 +178,7 @@ def train(model, optimizer, epochs=10000, n_points=100):
         
         # Print training progress
         if epoch % 10 == 0:  # Print more frequently since L-BFGS converges faster
-            print(f'L-BFGS - Epoch {epoch}, Loss: {closure.loss:.6e}, PDE Loss: {closure.loss_f:.6e}, IC Loss: {closure.loss_initial:.6e}, BC Loss: {closure.loss_bc:.6f}')
+            print(f'L-BFGS - Epoch {epoch}, Loss: {closure.loss:.6e}, PDE Loss: {closure.loss_f:.6e}, IC Loss: {closure.loss_initial:.6e}, BC Loss: {closure.loss_bc:.6e}')
 
     return losses
 

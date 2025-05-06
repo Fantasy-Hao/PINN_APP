@@ -249,7 +249,7 @@ def main():
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=1600)
+    losses = train(model, optimizer, epochs=20400, n_points=800)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))

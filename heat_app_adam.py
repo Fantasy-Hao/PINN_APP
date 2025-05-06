@@ -54,7 +54,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 128, 1])
+        self.net = MLP([2, 32, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -273,7 +273,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/heat_app_results.png', dpi=300)
+    plt.savefig('./logs/heat_app_adam_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -293,7 +293,7 @@ def evaluate_model(model, n_points=100):
     ax.set_title('Solution at Different Time Steps')
     ax.legend()
     ax.grid(True)
-    plt.savefig('./logs/heat_app_time_slices.png', dpi=300)
+    plt.savefig('./logs/heat_app_adam_time_slices.png', dpi=300)
     plt.show()
 
     return U_pred, U_exact, Error, l2_error
@@ -336,7 +336,7 @@ def main():
         inputs=inputs,
         K=400,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.986,
+        rho=0.985,
         n=len(get_model_params(model))
     )
 

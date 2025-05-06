@@ -1,6 +1,6 @@
 """
-APP + L-BFGS Optimization.
-Heat equation example. Solution given by
+Heat Equation PINN Solver with Dual Annealing and Adam Optimization.
+Heat equation analytical solution:
 
 u(x,t) = sin(pi*x) * exp(-pi^2*t).
 """
@@ -10,8 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from scipy.stats import qmc, norm
+from scipy.optimize import dual_annealing
 
 from utils import get_model_params, set_model_params
 
@@ -55,7 +54,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 64, 1])
+        self.net = MLP([2, 32, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -106,8 +105,8 @@ def exact_solution(x, t):
     return torch.sin(np.pi * x) * torch.exp(-np.pi ** 2 * t)
 
 
-# Loss function calculation for APP
-def loss_fun(model, params, inputs):
+# Loss function calculation
+def loss_fun(model, params, inputs, target=None):
     # Save original parameters
     original_params = get_model_params(model).clone()
 
@@ -140,112 +139,88 @@ def loss_fun(model, params, inputs):
     return loss.item()
 
 
-# Train model using APP optimizer
-def train_app(model, inputs, K, lambda_, rho, n):
+# Dual Annealing optimization algorithm
+def train_dual_annealing(model, inputs, target=None, maxiter=1000, initial_temp=5230.0, restart_temp_ratio=2e-5):
+    # Get initial parameters
     params = get_model_params(model)
     d = len(params)
-    xk = params.detach().cpu().numpy().astype(np.float64)
+    x0 = params.detach().cpu().numpy().astype(np.float64)
+
+    # Define bounds for parameters (adjust as needed)
+    bounds = [(-10, 10) for _ in range(d)]
+
+    # Define callback function to track progress
     loss_history = []
-    alpha = lambda_
 
-    halton = qmc.Halton(d=d, scramble=True, seed=42)
-    fc = np.inf
-    for i in range(K):
-        # Generate n random vectors from Halton sequence
-        x = halton.random(n)
-        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
+    def callback(x, f, context):
+        loss_history.append(f)
+        if len(loss_history) % 10 == 0:  # Print every 10 iterations
+            print(f'Dual Annealing -  Iteration {len(loss_history)}, Loss: {f:.6e}')
+        return False  # Continue optimization
 
-        # Compute function value sequence
-        f = [loss_fun(model, t[k], inputs) for k in range(n + 1)]
-        fk = f[0]
-        f_min = min(f)
-        fc = min(fc, f_min)
-        f = np.array(f) - f_min
+    # Define objective function for dual_annealing
+    def objective(x):
+        return loss_fun(model, x, inputs, target)
 
-        # Use averaged asymptotic formula
-        f_mean = np.mean(f)
-        if f_mean > 0:
-            f /= f_mean
+    # Run dual annealing optimization
+    print("Starting Dual Annealing optimization...")
+    result = dual_annealing(
+        objective,
+        bounds,
+        maxiter=maxiter,
+        initial_temp=initial_temp,
+        restart_temp_ratio=restart_temp_ratio,
+        callback=callback,
+        no_local_search=False
+    )
 
-        # Compute weights and new xk
-        weights = np.exp(-f)
-        xk = np.average(t, axis=0, weights=weights)
+    # Set the optimized parameters to the model
+    set_model_params(model, torch.tensor(result.x, dtype=torch.float64, device=device))
 
-        # Update parameters and record
-        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
-        alpha /= rho
-        loss_history.append(fk)
-        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
+    print(f"Optimization completed. Final loss: {result.fun:.6e}")
+    print(f"Optimization message: {result.message}")
 
     return loss_history
 
 
-# Train model using L-BFGS optimizer
-def train_lbfgs(model, inputs, epochs=200):
-    # Unpack input data
+# Adam optimization function
+def train_adam(model, inputs, n_epochs, learning_rate):
+    # Unpack inputs
     x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
-    
+
     # Create optimizer
-    optimizer = optim.LBFGS(model.parameters(),
-                            lr=1.0,
-                            max_iter=20,
-                            history_size=50,
-                            tolerance_grad=1e-5,
-                            tolerance_change=1e-7,
-                            line_search_fn="strong_wolfe")
-    
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
     # Training loop
     losses = []
-    
-    # Define closure function for L-BFGS
-    def closure():
-        # Zero gradients
-        optimizer.zero_grad()
-        
+    for epoch in range(n_epochs):
         # Calculate PDE residual loss
         f_pred = model.f(x_domain, t_domain)
         loss_f = torch.mean(torch.square(f_pred))
 
-        # Calculate initial condition loss (u(x,0) = sin(πx))
+        # Calculate initial condition loss
         u_initial_pred = model(x_initial, t_initial)
         u_initial_true = torch.sin(model.pi * x_initial)
         loss_initial = torch.mean(torch.square(u_initial_pred - u_initial_true))
 
-        # Calculate boundary condition loss (u(0,t) = u(1,t) = 0)
+        # Calculate boundary condition loss
         u_boundary = model(x_boundary, t_boundary)
         loss_bc = torch.mean(torch.square(u_boundary))
 
         # Total loss
         loss = loss_f + loss_initial + loss_bc
-        
-        # Backward pass
+
+        # Backward pass and optimization
+        optimizer.zero_grad()
         loss.backward()
-        
-        # Store current loss for printing
-        closure.loss = loss.item()
-        closure.loss_f = loss_f.item()
-        closure.loss_initial = loss_initial.item()
-        closure.loss_bc = loss_bc.item()
-        
-        return loss
-    
-    # Initialize loss values
-    closure.loss = 0.0
-    closure.loss_f = 0.0
-    closure.loss_initial = 0.0
-    closure.loss_bc = 0.0
-    
-    # Training loop
-    for epoch in range(epochs):
-        # Perform optimization step
-        optimizer.step(closure)
-        
+        optimizer.step()
+
         # Record loss
-        losses.append(closure.loss)
-        
-        # Print training progress
-        if epoch % 10 == 0:  # Print more frequently since L-BFGS converges faster
-            print(f'L-BFGS - Epoch {epoch}, Loss: {closure.loss:.6e}, PDE Loss: {closure.loss_f:.6e}, IC Loss: {closure.loss_initial:.6e}, BC Loss: {closure.loss_bc:.6e}')
+        losses.append(loss.item())
+
+        # Print progress
+        if epoch % 1000 == 0:
+            print(f'Adam - Iteration {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 
@@ -302,7 +277,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/heat_app_lbfgs_results.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -322,7 +297,7 @@ def evaluate_model(model, n_points=100):
     ax.set_title('Solution at Different Time Steps')
     ax.legend()
     ax.grid(True)
-    plt.savefig('./logs/heat_app_lbfgs_time_slices.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_time_slices.png', dpi=300)
     plt.show()
 
     return U_pred, U_exact, Error, l2_error
@@ -336,7 +311,7 @@ def main():
     # Domain boundaries
     x_min, x_max = 0.0, 1.0
     t_min, t_max = 0.0, 1.0
-    n_points = 400
+    n_points = 800
 
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device) * (x_max - x_min) + x_min
@@ -358,30 +333,26 @@ def main():
     # Prepare input data
     inputs = (x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary)
 
-    # Step 1: Use APP optimization algorithm for initial training
-    print("Step 1: APP optimization...")
-    app_losses = train_app(
+    # Step 1: Use Dual Annealing optimization algorithm
+    print("Step 1: Dual Annealing optimization...")
+    sa_losses = train_dual_annealing(
         model,
         inputs=inputs,
-        K=400,
-        lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
-        n=len(get_model_params(model))
+        maxiter=400  # Set maximum iterations
     )
 
-    # Step 2: Further training with L-BFGS optimizer
-    print("Step 2: Further training with L-BFGS optimizer...")
-    lbfgs_losses = train_lbfgs(model, inputs, epochs=200)
+    # Step 2: Use Adam optimizer for further training
+    print("Step 2: Adam optimization for further training...")
+    adam_losses = train_adam(model, inputs, n_epochs=20000, learning_rate=1e-3)
 
-    # Plot combined loss curve
+    # Plot loss curve
     plt.figure(figsize=(10, 6))
-    plt.semilogy(app_losses + lbfgs_losses)
+    plt.semilogy(sa_losses + adam_losses)
     plt.title('Training Loss')
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
-    plt.legend()
     plt.grid(True)
-    plt.savefig('./logs/heat_app_lbfgs_loss.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
