@@ -26,6 +26,6 @@ logs/
 # PyCharm
 .idea/
 
-# temp
+# lbfgs
 temp.ipynb
 temp.py

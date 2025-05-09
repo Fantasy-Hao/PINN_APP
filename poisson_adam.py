@@ -1,9 +1,3 @@
-"""
-Adam Optimization.
-Two dimensional Poisson equation example. Solution given by
-
-u(x,y) = sin(pi*x) * sin(pi*y).
-"""
 import os
 
 import matplotlib.pyplot as plt
@@ -11,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from sophia import SophiaG
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('./logs'):
@@ -52,7 +48,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,y), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 64, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, y):
@@ -111,9 +107,8 @@ def exact_solution(x, y):
     return torch.sin(np.pi * x) * torch.sin(np.pi * y)
 
 
-# Training function
-def train(model, optimizer, epochs=10000, n_points=100):
-    # Create training data
+# Generate training data for Poisson equation
+def generate_training_data(n_points=100):
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device)
     y_domain = torch.rand(n_points, 1, device=device)
@@ -134,10 +129,25 @@ def train(model, optimizer, epochs=10000, n_points=100):
     # Merge all boundary points
     x_boundary = torch.cat([x_boundary_0, x_boundary_1, x_boundary_2, x_boundary_3])
     y_boundary = torch.cat([y_boundary_0, y_boundary_1, y_boundary_2, y_boundary_3])
+    
+    return x_domain, y_domain, x_boundary, y_boundary
+
+
+# Training function
+def train(model, inputs, n_epochs):
+    # Generate training data
+    x_domain, y_domain, x_boundary, y_boundary = inputs
+
+    # Define optimizer
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
+    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
     losses = []
-    for epoch in range(epochs):
+    for epoch in range(n_epochs):
         # Calculate PDE residual loss
         f_pred = model.f(x_domain, y_domain)
         loss_f = torch.mean(torch.square(f_pred))
@@ -159,7 +169,7 @@ def train(model, optimizer, epochs=10000, n_points=100):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+            print(f'Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
 
     return losses
 
@@ -215,22 +225,21 @@ def evaluate_model(model, n_points=100):
 
     # Calculate L2 relative error
     l2_error = np.linalg.norm(u_pred - u_exact) / np.linalg.norm(u_exact)
-    print(f'L2 relative error: {l2_error:.6e}')
+    print(f'Relative L2 error: {l2_error:.6e}')
 
     return U_pred, U_exact, Error, l2_error
-
 
 # Main function
 def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # Prepare input data
+    inputs = generate_training_data(n_points=800)
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=400)
+    losses = train(model, inputs, n_epochs=20400)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -245,10 +254,6 @@ def main():
     # Evaluate model
     print("Evaluating model...")
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
-
-    # Save model
-    # torch.save(model.state_dict(), 'poisson_adam_model.pt')
-    # print("Model saved as 'poisson_adam_model.pt'")
 
 
 if __name__ == "__main__":

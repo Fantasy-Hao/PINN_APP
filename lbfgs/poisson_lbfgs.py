@@ -13,8 +13,8 @@ import torch.nn as nn
 import torch.optim as optim
 
 # Create logs directory if it doesn't exist
-if not os.path.exists('./logs'):
-    os.makedirs('./logs')
+if not os.path.exists('../logs'):
+    os.makedirs('../logs')
 
 # Set double precision
 torch.set_default_dtype(torch.float64)

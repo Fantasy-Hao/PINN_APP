@@ -1,6 +1,6 @@
 """
-APP Optimization.
-Heat equation example. Solution given by
+Heat Equation PINN Solver with Dual Annealing and Adam Optimization.
+Heat equation analytical solution:
 
 u(x,t) = sin(pi*x) * exp(-pi^2*t).
 """
@@ -10,14 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from scipy.stats import qmc, norm
+from scipy.optimize import dual_annealing
 
-from sophia import SophiaG
 from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
-if not os.path.exists('./logs'):
-    os.makedirs('./logs')
+if not os.path.exists('../logs'):
+    os.makedirs('../logs')
 
 # Set double precision
 torch.set_default_dtype(torch.float64)
@@ -107,7 +106,7 @@ def exact_solution(x, t):
 
 
 # Loss function calculation
-def loss_fun(model, params, inputs):
+def loss_fun(model, params, inputs, target=None):
     # Save original parameters
     original_params = get_model_params(model).clone()
 
@@ -140,53 +139,57 @@ def loss_fun(model, params, inputs):
     return loss.item()
 
 
-# Train model using APP optimizer
-def train_app(model, inputs, K, lambda_, rho, n):
+# Dual Annealing optimization algorithm
+def train_dual_annealing(model, inputs, target=None, maxiter=1000, initial_temp=5230.0, restart_temp_ratio=2e-5):
+    # Get initial parameters
     params = get_model_params(model)
     d = len(params)
-    xk = params.detach().cpu().numpy().astype(np.float64)
+    x0 = params.detach().cpu().numpy().astype(np.float64)
+
+    # Define bounds for parameters (adjust as needed)
+    bounds = [(-10, 10) for _ in range(d)]
+
+    # Define callback function to track progress
     loss_history = []
-    alpha = lambda_
 
-    halton = qmc.Halton(d=d, scramble=True, seed=42)
-    fc = np.inf
-    for i in range(K):
-        # Generate n random vectors from Halton sequence
-        x = halton.random(n)
-        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
+    def callback(x, f, context):
+        loss_history.append(f)
+        if len(loss_history) % 10 == 0:  # Print every 10 iterations
+            print(f'Dual Annealing -  Iteration {len(loss_history)}, Loss: {f:.6e}')
+        return False  # Continue optimization
 
-        # Compute function value sequence
-        f = [loss_fun(model, t[k], inputs) for k in range(n + 1)]
-        fk = f[0]
-        f_min = min(f)
-        fc = min(fc, f_min)
-        f = np.array(f) - f_min
+    # Define objective function for dual_annealing
+    def objective(x):
+        return loss_fun(model, x, inputs, target)
 
-        # Use averaged asymptotic formula
-        f_mean = np.mean(f)
-        if f_mean > 0:
-            f /= f_mean
+    # Run dual annealing optimization
+    print("Starting Dual Annealing optimization...")
+    result = dual_annealing(
+        objective,
+        bounds,
+        maxiter=maxiter,
+        initial_temp=initial_temp,
+        restart_temp_ratio=restart_temp_ratio,
+        callback=callback,
+        no_local_search=False
+    )
 
-        # Compute weights and new xk
-        weights = np.exp(-f)
-        xk = np.average(t, axis=0, weights=weights)
+    # Set the optimized parameters to the model
+    set_model_params(model, torch.tensor(result.x, dtype=torch.float64, device=device))
 
-        # Update parameters and record
-        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
-        alpha /= rho
-        loss_history.append(fk)
-        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
+    print(f"Optimization completed. Final loss: {result.fun:.6e}")
+    print(f"Optimization message: {result.message}")
 
     return loss_history
 
 
-# Train model using Sophia optimizer
-def train_Sophia(model, inputs, n_epochs, learning_rate):
-    # Unpack input data
+# Adam optimization function
+def train_adam(model, inputs, n_epochs, learning_rate):
+    # Unpack inputs
     x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
 
     # Create optimizer
-    optimizer = SophiaG(model.parameters(), lr=learning_rate, betas=(0.965, 0.99), rho=0.05, weight_decay=0)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Training loop
     losses = []
@@ -207,7 +210,7 @@ def train_Sophia(model, inputs, n_epochs, learning_rate):
         # Total loss
         loss = loss_f + loss_initial + loss_bc
 
-        # Backpropagation and optimization
+        # Backward pass and optimization
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -215,9 +218,9 @@ def train_Sophia(model, inputs, n_epochs, learning_rate):
         # Record loss
         losses.append(loss.item())
 
-        # Print training progress
+        # Print progress
         if epoch % 1000 == 0:
-            print(f'Sophia - Epoch {epoch}, Loss: {loss.item():.6e}')
+            print(f'Adam - Iteration {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 
@@ -274,7 +277,7 @@ def evaluate_model(model, n_points=100):
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig('./logs/heat_app_sophia_results.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_results.png', dpi=300)
     plt.show()
 
     # Calculate L2 relative error
@@ -294,7 +297,7 @@ def evaluate_model(model, n_points=100):
     ax.set_title('Solution at Different Time Steps')
     ax.legend()
     ax.grid(True)
-    plt.savefig('./logs/heat_app_sophia_time_slices.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_time_slices.png', dpi=300)
     plt.show()
 
     return U_pred, U_exact, Error, l2_error
@@ -330,29 +333,26 @@ def main():
     # Prepare input data
     inputs = (x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary)
 
-    # Step 1: Use APP optimization algorithm
-    print("Step 1: APP optimization...")
-    app_losses = train_app(
+    # Step 1: Use Dual Annealing optimization algorithm
+    print("Step 1: Dual Annealing optimization...")
+    sa_losses = train_dual_annealing(
         model,
         inputs=inputs,
-        K=400,
-        lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.985,
-        n=len(get_model_params(model))
+        maxiter=400  # Set maximum iterations
     )
 
-    # Step 2: Further training with Sophia optimizer
-    print("Step 2: Further training with Sophia optimizer...")
-    sophia_losses = train_Sophia(model, inputs, n_epochs=20000, learning_rate=2e-4)
+    # Step 2: Use Adam optimizer for further training
+    print("Step 2: Adam optimization for further training...")
+    adam_losses = train_adam(model, inputs, n_epochs=20000, learning_rate=1e-3)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
-    plt.semilogy(app_losses + sophia_losses)
+    plt.semilogy(sa_losses + adam_losses)
     plt.title('Training Loss')
     plt.xlabel('Iterations')
     plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/heat_app_sophia_loss.png', dpi=300)
+    plt.savefig('./logs/heat_sa_adam_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model

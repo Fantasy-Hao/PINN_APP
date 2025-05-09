@@ -1,17 +1,13 @@
-"""
-APP + Adam Optimization.
-Two dimensional Poisson equation example. Solution given by
-
-u(x,y) = sin(pi*x) * sin(pi*y).
-"""
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from scipy.stats import qmc, norm
 
+from sophia import SophiaG
 from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
@@ -54,7 +50,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,y), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 64, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, y):
@@ -111,6 +107,32 @@ class PINN(nn.Module):
 # Analytical solution
 def exact_solution(x, y):
     return torch.sin(np.pi * x) * torch.sin(np.pi * y)
+
+
+# Generate training data for Poisson equation
+def generate_training_data(n_points=100):
+    # Interior points
+    x_domain = torch.rand(n_points, 1, device=device)
+    y_domain = torch.rand(n_points, 1, device=device)
+
+    # Boundary points (x=0, x=1, y=0, y=1)
+    x_boundary_0 = torch.zeros(n_points // 4, 1, device=device)
+    y_boundary_0 = torch.rand(n_points // 4, 1, device=device)
+
+    x_boundary_1 = torch.ones(n_points // 4, 1, device=device)
+    y_boundary_1 = torch.rand(n_points // 4, 1, device=device)
+
+    x_boundary_2 = torch.rand(n_points // 4, 1, device=device)
+    y_boundary_2 = torch.zeros(n_points // 4, 1, device=device)
+
+    x_boundary_3 = torch.rand(n_points // 4, 1, device=device)
+    y_boundary_3 = torch.ones(n_points // 4, 1, device=device)
+
+    # Merge all boundary points
+    x_boundary = torch.cat([x_boundary_0, x_boundary_1, x_boundary_2, x_boundary_3])
+    y_boundary = torch.cat([y_boundary_0, y_boundary_1, y_boundary_2, y_boundary_3])
+    
+    return x_domain, y_domain, x_boundary, y_boundary
 
 
 # Loss function calculation
@@ -183,12 +205,16 @@ def train_app(model, inputs, K, lambda_, rho, n):
 
 
 # Train model using Adam optimizer
-def train_adam(model, inputs, n_epochs, learning_rate):
+def train_adam(model, inputs, n_epochs):
     # Unpack input data
     x_domain, y_domain, x_boundary, y_boundary = inputs
     
     # Create optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
+    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
     
     # Training loop
     losses = []
@@ -214,7 +240,7 @@ def train_adam(model, inputs, n_epochs, learning_rate):
         
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+            print(f'Epoch {epoch}, Loss: {loss.item():.6e}')
     
     return losses
 
@@ -276,34 +302,7 @@ def evaluate_model(model, n_points=100):
 
     # Calculate L2 relative error
     l2_error = np.linalg.norm(u_pred - u_exact) / np.linalg.norm(u_exact)
-    print(f'L2 relative error: {l2_error:.6e}')
-
-    # Plot solution along x=0.5 and y=0.5
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    
-    # Plot along x=0.5
-    mid_x = n_points // 2
-    axes[0].plot(y, U_pred[mid_x, :], '--', label='PINN')
-    axes[0].plot(y, U_exact[mid_x, :], '-', label='Exact')
-    axes[0].set_xlabel('y')
-    axes[0].set_ylabel('u(0.5,y)')
-    axes[0].set_title('Solution along x=0.5')
-    axes[0].legend()
-    axes[0].grid(True)
-    
-    # Plot along y=0.5
-    mid_y = n_points // 2
-    axes[1].plot(x, U_pred[:, mid_y], '--', label='PINN')
-    axes[1].plot(x, U_exact[:, mid_y], '-', label='Exact')
-    axes[1].set_xlabel('x')
-    axes[1].set_ylabel('u(x,0.5)')
-    axes[1].set_title('Solution along y=0.5')
-    axes[1].legend()
-    axes[1].grid(True)
-    
-    plt.tight_layout()
-    plt.savefig('./logs/poisson_app_adam_slices.png', dpi=300)
-    plt.show()
+    print(f'Relative L2 error: {l2_error:.6e}')
 
     return U_pred, U_exact, Error, l2_error
 
@@ -312,32 +311,8 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Create training data
-    n_points = 1600
-
-    # Interior points
-    x_domain = torch.rand(n_points, 1, device=device)
-    y_domain = torch.rand(n_points, 1, device=device)
-
-    # Boundary points (x=0, x=1, y=0, y=1)
-    x_boundary_0 = torch.zeros(n_points // 4, 1, device=device)
-    y_boundary_0 = torch.rand(n_points // 4, 1, device=device)
-
-    x_boundary_1 = torch.ones(n_points // 4, 1, device=device)
-    y_boundary_1 = torch.rand(n_points // 4, 1, device=device)
-
-    x_boundary_2 = torch.rand(n_points // 4, 1, device=device)
-    y_boundary_2 = torch.zeros(n_points // 4, 1, device=device)
-
-    x_boundary_3 = torch.rand(n_points // 4, 1, device=device)
-    y_boundary_3 = torch.ones(n_points // 4, 1, device=device)
-
-    # Merge all boundary points
-    x_boundary = torch.cat([x_boundary_0, x_boundary_1, x_boundary_2, x_boundary_3])
-    y_boundary = torch.cat([y_boundary_0, y_boundary_1, y_boundary_2, y_boundary_3])
-
     # Prepare input data
-    inputs = (x_domain, y_domain, x_boundary, y_boundary)
+    inputs = generate_training_data(n_points=800)
 
     # Step 1: Use APP optimization algorithm
     print("Step 1: APP optimization...")
@@ -346,13 +321,13 @@ def main():
         inputs=inputs,
         K=400,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.96,
+        rho=0.98,
         n=len(get_model_params(model))
     )
 
     # Step 2: Further training with Adam optimizer
     print("Step 2: Further training with Adam optimizer...")
-    adam_losses = train_adam(model, inputs, n_epochs=20000, learning_rate=1e-3)
+    adam_losses = train_adam(model, inputs, n_epochs=20000)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -367,10 +342,6 @@ def main():
     # Evaluate model
     print("Evaluating model...")
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
-
-    # Save model
-    # torch.save(model.state_dict(), './logs/poisson_app_adam_model.pt')
-    # print("Model saved as './logs/poisson_app_adam_model.pt'")
 
 
 if __name__ == "__main__":

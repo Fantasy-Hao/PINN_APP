@@ -1,0 +1,400 @@
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from scipy.stats import qmc, norm
+
+from sophia import SophiaG
+from utils import get_model_params, set_model_params
+
+# Create logs directory
+if not os.path.exists('./logs'):
+    os.makedirs('./logs')
+
+# Set double precision
+torch.set_default_dtype(torch.float64)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Set random seed for reproducibility
+seed = 42
+torch.manual_seed(seed)
+np.random.seed(seed)
+
+
+# Define neural network model
+class MLP(nn.Module):
+    def __init__(self, layer_sizes, activation=nn.Tanh()):
+        super(MLP, self).__init__()
+        self.layers = nn.ModuleList()
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+        self.activation = activation
+
+        # Initialize weights
+        for layer in self.layers:
+            nn.init.xavier_normal_(layer.weight)
+            nn.init.zeros_(layer.bias)
+
+    def forward(self, x):
+        for layer in self.layers[:-1]:
+            x = self.activation(layer(x))
+        x = self.layers[-1](x)
+        return x
+
+
+# Define PINN model for Wave equation
+class PINN(nn.Module):
+    def __init__(self, wave_speed=1.0):
+        super(PINN, self).__init__()
+        # Define network structure: input 2 features (x,t), output 1 value (u)
+        self.net = MLP([2, 64, 1])
+        self.c = wave_speed  # Wave propagation speed
+
+    def forward(self, x, t):
+        # Concatenate inputs into a tensor
+        xt = torch.cat([x, t], dim=1)
+        return self.net(xt)
+
+    def f(self, x, t):
+        """Calculate Wave equation residual: ∂²u/∂t² - c²∂²u/∂x² = 0"""
+        x.requires_grad_(True)
+        t.requires_grad_(True)
+
+        u = self.forward(x, t)
+
+        # Calculate first-order derivative with respect to time
+        u_t = torch.autograd.grad(
+            u, t,
+            grad_outputs=torch.ones_like(u),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+
+        # Calculate second-order derivative with respect to time
+        u_tt = torch.autograd.grad(
+            u_t, t,
+            grad_outputs=torch.ones_like(u_t),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+
+        # Calculate first-order derivative with respect to x
+        u_x = torch.autograd.grad(
+            u, x,
+            grad_outputs=torch.ones_like(u),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+
+        # Calculate second-order derivative with respect to x
+        u_xx = torch.autograd.grad(
+            u_x, x,
+            grad_outputs=torch.ones_like(u_x),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+
+        # Wave equation: ∂²u/∂t² - c²∂²u/∂x² = 0
+        residual = u_tt - self.c ** 2 * u_xx
+
+        return residual
+
+
+# Generate analytical solution for Wave equation
+def exact_solution(x, t, c=1.0, L=1.0):
+    return np.sin(np.pi * x / L) * np.cos(np.pi * c * t / L)
+
+
+# Generate training data
+def generate_training_data(x_min=0.0, x_max=1.0, t_min=0.0, t_max=1.0, nx=100, nt=100, c=1.0):
+    # Create grid
+    x = np.linspace(x_min, x_max, nx)[:, None]
+    t = np.linspace(t_min, t_max, nt)[:, None]
+    X, T = np.meshgrid(x.flatten(), t.flatten())
+
+    # Calculate exact solution
+    Exact = exact_solution(X, T, c, x_max - x_min)
+
+    # Convert to PyTorch tensors
+    x_tensor = torch.tensor(x, device=device)
+    t_tensor = torch.tensor(t, device=device)
+
+    # Boundary points (x=x_min, x=x_max)
+    N_b = 100
+    idx_t = np.random.choice(t.shape[0], N_b, replace=False)
+    t_b = torch.tensor(t[idx_t], device=device)
+    x_lb = torch.full_like(t_b, x_min)
+    x_ub = torch.full_like(t_b, x_max)
+
+    # Initial condition points (t=0)
+    N_0 = 100
+    idx_x = np.random.choice(x.shape[0], N_0, replace=False)
+    x_0 = torch.tensor(x[idx_x], device=device)
+    t_0 = torch.zeros_like(x_0, device=device)
+    u_0 = torch.tensor(exact_solution(x[idx_x], 0, c, x_max - x_min), device=device)
+
+    # Initial velocity condition (∂u/∂t at t=0)
+    u_t_0 = torch.zeros_like(u_0, device=device)  # For this example, initial velocity is zero
+
+    # Collocation points (interior domain)
+    N_f = 800
+    x_f = torch.rand(N_f, 1, device=device) * (x_max - x_min) + x_min
+    t_f = torch.rand(N_f, 1, device=device) * (t_max - t_min) + t_min
+
+    return x_lb, t_b, x_ub, t_b, x_0, t_0, u_0, u_t_0, x_f, t_f, x_tensor, t_tensor, Exact, X, T
+
+
+def loss_fun(model, params, inputs):
+    """Calculate loss for APP optimizer"""
+    # Unpack input data
+    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, _, _, _, _, _ = inputs
+    
+    # Set model parameters
+    set_model_params(model, torch.tensor(params, dtype=torch.float64, device=device))
+    
+    # Calculate PDE residual loss
+    f_pred = model.f(x_f, t_f)
+    loss_f = torch.mean(torch.square(f_pred))
+    
+    # Calculate boundary condition loss (u(0,t) = u(1,t) = 0)
+    u_lb = model(x_lb, t_lb)
+    u_ub = model(x_ub, t_ub)
+    loss_bc = torch.mean(torch.square(u_lb)) + torch.mean(torch.square(u_ub))
+    
+    # Calculate initial condition loss
+    u_0_pred = model(x_0, t_0)
+    loss_ic = torch.mean(torch.square(u_0_pred - u_0))
+    
+    # Calculate initial velocity condition loss
+    with torch.enable_grad():
+        x_0.requires_grad_(True)
+        t_0.requires_grad_(True)
+        u_0_pred = model(x_0, t_0)
+        u_t_0_pred = torch.autograd.grad(
+            u_0_pred, t_0,
+            grad_outputs=torch.ones_like(u_0_pred),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+    loss_ic_v = torch.mean(torch.square(u_t_0_pred - u_t_0))
+    
+    # Total loss
+    loss = loss_f + 10.0 * loss_ic + 10.0 * loss_ic_v + loss_bc
+    
+    return loss.item()
+
+
+# Train model using APP optimizer
+def train_app(model, inputs, K, lambda_, rho, n):
+    params = get_model_params(model)
+    d = len(params)
+    xk = params.detach().cpu().numpy().astype(np.float64)
+    loss_history = []
+    alpha = lambda_
+
+    halton = qmc.Halton(d=d, scramble=True, seed=42)
+    fc = np.inf
+    for i in range(K):
+        # Generate n random vectors from Halton sequence
+        x = halton.random(n)
+        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
+
+        # Compute function value sequence
+        f = [loss_fun(model, t[k], inputs) for k in range(n + 1)]
+        fk = f[0]
+        f_min = min(f)
+        fc = min(fc, f_min)
+        f = np.array(f) - f_min
+
+        # Use averaged asymptotic formula
+        f_mean = np.mean(f)
+        if f_mean > 0:
+            f /= f_mean
+
+        # Compute weights and new xk
+        weights = np.exp(-f)
+        xk = np.average(t, axis=0, weights=weights)
+
+        # Update parameters and record
+        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
+        alpha /= rho
+        loss_history.append(fk)
+        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
+
+    return loss_history
+
+
+# Training function
+def train_adam(model, inputs, n_epochs):
+    # Unpack input data
+    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, _, _, _, _, _ = inputs
+
+    # Create optimizer
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
+    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
+    
+    # Training loop
+    losses = []
+
+    for epoch in range(n_epochs):
+        # Calculate PDE residual loss
+        f_pred = model.f(x_f, t_f)
+        loss_f = torch.mean(torch.square(f_pred))
+
+        # Calculate boundary condition loss (u(0,t) = u(1,t) = 0)
+        u_lb = model(x_lb, t_lb)
+        u_ub = model(x_ub, t_ub)
+        loss_bc = torch.mean(torch.square(u_lb)) + torch.mean(torch.square(u_ub))
+
+        # Calculate initial condition loss
+        u_0_pred = model(x_0, t_0)
+        loss_ic = torch.mean(torch.square(u_0_pred - u_0))
+
+        # Calculate initial velocity condition loss
+        with torch.enable_grad():
+            x_0.requires_grad_(True)
+            t_0.requires_grad_(True)
+            u_0_pred = model(x_0, t_0)
+            u_t_0_pred = torch.autograd.grad(
+                u_0_pred, t_0,
+                grad_outputs=torch.ones_like(u_0_pred),
+                retain_graph=True,
+                create_graph=True
+            )[0]
+        loss_ic_v = torch.mean(torch.square(u_t_0_pred - u_t_0))
+
+        # Total loss
+        loss = loss_f + 10.0 * loss_ic + 10.0 * loss_ic_v + loss_bc
+
+        # Backpropagation and optimization
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # Record loss
+        losses.append(loss.item())
+
+        # Print training progress
+        if epoch % 1000 == 0:
+            print(f'Epoch {epoch}, Loss: {loss.item():.6e}')
+    return losses
+
+
+# Evaluate and visualize results
+def evaluate_model(model, x, t, Exact, X, T):
+    # Convert to PyTorch tensors
+    X_tensor = torch.tensor(X.flatten()[:, None], device=device)
+    T_tensor = torch.tensor(T.flatten()[:, None], device=device)
+
+    # Predict
+    model.eval()
+    with torch.no_grad():
+        u_pred = model(X_tensor, T_tensor).cpu().numpy()
+
+    # Reshape to grid shape
+    U_pred = u_pred.reshape(T.shape)
+
+    # Calculate error
+    error_u = np.linalg.norm(Exact.flatten() - U_pred.flatten(), 2) / np.linalg.norm(Exact.flatten(), 2)
+    print(f'Relative L2 error: {error_u:.6e}')
+
+    # Visualization
+    fig = plt.figure(figsize=(18, 10))
+
+    # 3D surface plot - Exact solution
+    ax = fig.add_subplot(221, projection='3d')
+    surf = ax.plot_surface(X, T, Exact, linewidth=0, antialiased=False)
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$t$')
+    ax.set_zlabel('$u(x,t)$')
+    ax.set_title('Exact Solution')
+    fig.colorbar(surf, ax=ax, shrink=0.8)
+
+    # 3D surface plot - PINN prediction
+    ax = fig.add_subplot(222, projection='3d')
+    surf = ax.plot_surface(X, T, U_pred, linewidth=0, antialiased=False)
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$t$')
+    ax.set_zlabel('$u(x,t)$')
+    ax.set_title('PINN Prediction')
+    fig.colorbar(surf, ax=ax, shrink=0.8)
+
+    # 2D heatmap - Exact solution
+    ax = fig.add_subplot(223)
+    h = ax.imshow(Exact, interpolation='nearest', cmap='rainbow',
+                  extent=[x.min(), x.max(), t.min(), t.max()],
+                  origin='lower', aspect='auto')
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$t$')
+    ax.set_title('Exact Solution')
+    fig.colorbar(h, ax=ax)
+
+    # 2D heatmap - PINN prediction
+    ax = fig.add_subplot(224)
+    h = ax.imshow(U_pred, interpolation='nearest', cmap='rainbow',
+                  extent=[x.min(), x.max(), t.min(), t.max()],
+                  origin='lower', aspect='auto')
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$t$')
+    ax.set_title('PINN Prediction')
+    fig.colorbar(h, ax=ax)
+
+    plt.tight_layout()
+    plt.savefig('./logs/wave_solution.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+    return U_pred, Exact, error_u
+
+
+# Main function
+def main():
+    # Create model
+    model = PINN(wave_speed=1.0).to(device)
+
+    # Generate training data
+    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, x_tensor, t_tensor, Exact, X, T = generate_training_data(c=1.0)
+
+    # Pack inputs for training
+    inputs = (x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, x_f, t_f)
+
+    # Step 1: Use APP optimization algorithm
+    print("Step 1: APP optimization...")
+    app_losses = train_app(
+        model,
+        inputs=inputs,
+        K=400,
+        lambda_=1 / np.sqrt(len(get_model_params(model))),
+        rho=0.98,
+        n=len(get_model_params(model))
+    )
+
+    # Step 2: Further training with Adam optimizer
+    print("Step 2: Further training with Adam optimizer...")
+    adam_losses = train_adam(
+        model,
+        inputs=inputs,
+        n_epochs=20000
+    )
+    
+    # Plot loss curve
+    plt.figure(figsize=(10, 6))
+    plt.semilogy(app_losses + adam_losses)
+    plt.title('Training Loss')
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss (log scale)')
+    plt.grid(True)
+    plt.savefig('./logs/wave_loss.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # Evaluate model
+    print("Evaluating model...")
+    U_pred, Exact, error_u = evaluate_model(model, x_tensor.cpu().numpy(), t_tensor.cpu().numpy(), Exact, X, T)
+
+if __name__ == "__main__":
+    main()

@@ -1,9 +1,3 @@
-"""
-Adam Optimization.
-Heat equation example. Solution given by
-
-u(x,t) = sin(pi*x) * exp(-pi^2*t).
-"""
 import os
 
 import matplotlib.pyplot as plt
@@ -11,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from sophia import SophiaG
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('./logs'):
@@ -52,7 +48,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 64, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -92,7 +88,6 @@ class PINN(nn.Module):
         )[0]
 
         # Heat equation: ∂u/∂t - α∂²u/∂x² = 0
-        # Using α = 1 for simplicity
         residual = u_t - u_xx
 
         return residual
@@ -103,13 +98,8 @@ def exact_solution(x, t):
     return torch.sin(np.pi * x) * torch.exp(-np.pi ** 2 * t)
 
 
-# Training function
-def train(model, optimizer, epochs, n_points):
-    # Domain bounds
-    x_min, x_max = 0.0, 1.0
-    t_min, t_max = 0.0, 1.0
-
-    # Create training data
+# Generate training data for heat equation
+def generate_training_data(n_points, x_min=0.0, x_max=1.0, t_min=0.0, t_max=1.0):
     # Interior points
     x_domain = torch.rand(n_points, 1, device=device) * (x_max - x_min) + x_min
     t_domain = torch.rand(n_points, 1, device=device) * (t_max - t_min) + t_min
@@ -126,10 +116,25 @@ def train(model, optimizer, epochs, n_points):
     # Merge boundary points
     x_boundary = torch.cat([x_boundary_0, x_boundary_1])
     t_boundary = torch.cat([t_boundary[:n_points // 2], t_boundary[n_points // 2:]])
+    
+    return x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary
+
+
+# Training function
+def train(model, inputs, n_epochs):
+    # Generate training data
+    x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
+
+    # Define optimizer
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
+    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
     losses = []
-    for epoch in range(epochs):
+    for epoch in range(n_epochs):
         # Calculate PDE residual loss
         f_pred = model.f(x_domain, t_domain)
         loss_f = torch.mean(torch.square(f_pred))
@@ -156,7 +161,7 @@ def train(model, optimizer, epochs, n_points):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, IC Loss: {loss_initial.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+            print(f'Epoch {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 
@@ -218,23 +223,7 @@ def evaluate_model(model, n_points=100):
 
     # Calculate L2 relative error
     l2_error = np.linalg.norm(u_pred - u_exact) / np.linalg.norm(u_exact)
-    print(f'L2 relative error: {l2_error:.6e}')
-
-    # Plot solution at different time steps
-    fig, ax = plt.subplots(figsize=(10, 6))
-    time_steps = [0, 0.25, 0.5, 0.75, 1.0]
-    for i, t in enumerate(time_steps):
-        t_idx = int(t * (n_points-1))
-        ax.plot(x, U_pred[t_idx, :], '--', label=f'PINN t={t}')
-        ax.plot(x, U_exact[t_idx, :], '-', label=f'Exact t={t}')
-
-    ax.set_xlabel('x')
-    ax.set_ylabel('u(x,t)')
-    ax.set_title('Solution at Different Time Steps')
-    ax.legend()
-    ax.grid(True)
-    plt.savefig('./logs/heat_adam_time_slices.png', dpi=300)
-    plt.show()
+    print(f'Relative L2 error: {l2_error:.6e}')
 
     return U_pred, U_exact, Error, l2_error
 
@@ -244,12 +233,12 @@ def main():
     # Create model
     model = PINN().to(device)
 
-    # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # Prepare input data
+    inputs = generate_training_data(n_points=800)
 
     # Train model
     print("Starting training...")
-    losses = train(model, optimizer, epochs=20400, n_points=800)
+    losses = train(model, inputs, n_epochs=20000)
 
     # Plot loss curve
     plt.figure(figsize=(10, 6))
@@ -264,10 +253,6 @@ def main():
     # Evaluate model
     print("Evaluating model...")
     U_pred, U_exact, Error, l2_error = evaluate_model(model)
-
-    # Save model
-    # torch.save(model.state_dict(), './logs/heat_adam_model.pt')
-    # print("Model saved as './logs/heat_adam_model.pt'")
 
 
 if __name__ == "__main__":

@@ -15,8 +15,8 @@ from scipy.optimize import dual_annealing
 from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
-if not os.path.exists('./logs'):
-    os.makedirs('./logs')
+if not os.path.exists('../logs'):
+    os.makedirs('../logs')
 
 # Set double precision
 torch.set_default_dtype(torch.float64)
