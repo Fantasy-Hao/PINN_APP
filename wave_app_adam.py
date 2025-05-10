@@ -150,7 +150,7 @@ def generate_training_data(x_min=0.0, x_max=1.0, t_min=0.0, t_max=1.0, nx=100, n
 def loss_fun(model, params, inputs):
     """Calculate loss for APP optimizer"""
     # Unpack input data
-    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, _, _, _, _, _ = inputs
+    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f = inputs
     
     # Set model parameters
     set_model_params(model, torch.tensor(params, dtype=torch.float64, device=device))
@@ -230,14 +230,14 @@ def train_app(model, inputs, K, lambda_, rho, n):
 # Training function
 def train_adam(model, inputs, n_epochs):
     # Unpack input data
-    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, _, _, _, _, _ = inputs
+    x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f = inputs
 
-    # Create optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
-    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
-    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
-    # optimizer = SophiaG(model.parameters(), lr=1e-4)
+    # Define optimizer
+    # optimizer = optim.Adam(model.parameters(), lr=5e-4)
+    # optimizer = optim.AdamW(model.parameters(), lr=5e-4)
+    # optimizer = optim.NAdam(model.parameters(), lr=5e-4)
+    # optimizer = optim.RAdam(model.parameters(), lr=5e-4)
+    optimizer = SophiaG(model.parameters(), lr=1e-4)
     
     # Training loop
     losses = []
@@ -361,7 +361,7 @@ def main():
     x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f, x_tensor, t_tensor, Exact, X, T = generate_training_data(c=1.0)
 
     # Pack inputs for training
-    inputs = (x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, x_f, t_f)
+    inputs = (x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f)
 
     # Step 1: Use APP optimization algorithm
     print("Step 1: APP optimization...")

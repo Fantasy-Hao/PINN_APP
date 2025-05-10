@@ -48,7 +48,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 128, 1])
+        self.net = MLP([2, 16, 1])
 
     def forward(self, x, t):
         # Concatenate inputs into a tensor
@@ -94,25 +94,19 @@ class PINN(nn.Module):
             create_graph=True
         )[0]
 
-        # KdV equation: ∂u/∂t + u∂u/∂x + ∂³u/∂x³ = 0
-        residual = u_t + u * u_x + u_xxx
+        # KdV equation: ∂u/∂t + 6u∂u/∂x + ∂³u/∂x³ = 0
+        residual = u_t + 6 * u * u_x + u_xxx
 
         return residual
 
 
 # Generate analytical solution for KdV equation (soliton solution)
 def exact_solution(x, t, c=1.0):
-    """
-    Soliton solution for KdV equation: u(x,t) = 3c * sech²(0.5 * sqrt(c) * (x - c*t))
-    c: wave speed parameter
-    """
-    z = 0.5 * np.sqrt(c) * (x - c * t)
-    u = 3 * c / np.cosh(z) ** 2
-    return u
+    return 0.5 * c * (1 / np.cosh(0.5 * np.sqrt(c) * (x - c * t))) ** 2
 
 
 # Generate training data
-def generate_training_data(x_min=-15.0, x_max=15.0, t_min=0.0, t_max=5.0, nx=200, nt=100):
+def generate_training_data(x_min=-5.0, x_max=5.0, t_min=0.0, t_max=2.0, nx=200, nt=100):
     # Create grid
     x = np.linspace(x_min, x_max, nx)[:, None]
     t = np.linspace(t_min, t_max, nt)[:, None]
@@ -140,7 +134,7 @@ def generate_training_data(x_min=-15.0, x_max=15.0, t_min=0.0, t_max=5.0, nx=200
     u_0 = torch.tensor(exact_solution(x[idx_x], 0), device=device)
 
     # Collocation points (interior domain)
-    N_f = 1800
+    N_f = 800
     x_f = torch.rand(N_f, 1, device=device) * (x_max - x_min) + x_min
     t_f = torch.rand(N_f, 1, device=device) * (t_max - t_min) + t_min
 
@@ -150,7 +144,7 @@ def generate_training_data(x_min=-15.0, x_max=15.0, t_min=0.0, t_max=5.0, nx=200
 # Training function
 def train(model, n_epochs, x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, x_f, t_f):
     # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
     # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
@@ -267,7 +261,7 @@ def main():
 
     # Train model
     print("Starting training...")
-    losses = train(model, n_epochs=20400,
+    losses = train(model, n_epochs=10200,
                    x_lb=x_lb, t_lb=t_lb,
                    x_ub=x_ub, t_ub=t_ub,
                    x_0=x_0, t_0=t_0, u_0=u_0,

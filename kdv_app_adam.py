@@ -50,7 +50,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 128, 1])
+        self.net = MLP([2, 16, 1])
 
     def forward(self, x, t):
         # Concatenate inputs into a tensor
@@ -96,21 +96,19 @@ class PINN(nn.Module):
             create_graph=True
         )[0]
 
-        # KdV equation: ∂u/∂t + u∂u/∂x + ∂³u/∂x³ = 0
-        residual = u_t + u * u_x + u_xxx
+        # KdV equation: ∂u/∂t + 6u∂u/∂x + ∂³u/∂x³ = 0
+        residual = u_t + 6 * u * u_x + u_xxx
 
         return residual
 
 
 # Generate analytical solution for KdV equation (soliton solution)
 def exact_solution(x, t, c=1.0):
-    z = 0.5 * np.sqrt(c) * (x - c * t)
-    u = 3 * c / np.cosh(z) ** 2
-    return u
+    return 0.5 * c * (1 / np.cosh(0.5 * np.sqrt(c) * (x - c * t))) ** 2
 
 
 # Generate training data
-def generate_training_data(x_min=-15.0, x_max=15.0, t_min=0.0, t_max=5.0, nx=200, nt=100):
+def generate_training_data(x_min=-5.0, x_max=5.0, t_min=0.0, t_max=2.0, nx=200, nt=100):
     # Create grid
     x = np.linspace(x_min, x_max, nx)[:, None]
     t = np.linspace(t_min, t_max, nt)[:, None]
@@ -217,7 +215,7 @@ def train_adam(model, inputs, n_epochs):
     # Unpack input data
     x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, x_f, t_f = inputs
 
-    # Create optimizer
+    # Define optimizer
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
@@ -341,9 +339,9 @@ def main():
     app_losses = train_app(
         model,
         inputs=inputs,
-        K=400,
+        K=200,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
+        rho=0.96,
         n=len(get_model_params(model))
     )
 
@@ -352,7 +350,7 @@ def main():
     adam_losses = train_adam(
         model, 
         inputs=inputs,
-        n_epochs=20000
+        n_epochs=10000
     )
 
     # Plot loss curve

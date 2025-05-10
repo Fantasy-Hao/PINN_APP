@@ -103,12 +103,6 @@ class PINN(nn.Module):
 
 # Generate analytical solution for Wave equation
 def exact_solution(x, t, c=1.0, L=1.0):
-    """
-    Analytical solution for the wave equation with specific initial conditions:
-    u(x,0) = sin(πx/L), ∂u/∂t(x,0) = 0
-    
-    This gives the solution: u(x,t) = sin(πx/L)cos(πct/L)
-    """
     return np.sin(np.pi * x / L) * np.cos(np.pi * c * t / L)
 
 
@@ -144,7 +138,7 @@ def generate_training_data(x_min=0.0, x_max=1.0, t_min=0.0, t_max=1.0, nx=100, n
     u_t_0 = torch.zeros_like(u_0, device=device)  # For this example, initial velocity is zero
 
     # Collocation points (interior domain)
-    N_f = 1800
+    N_f = 800
     x_f = torch.rand(N_f, 1, device=device) * (x_max - x_min) + x_min
     t_f = torch.rand(N_f, 1, device=device) * (t_max - t_min) + t_min
 
@@ -154,11 +148,11 @@ def generate_training_data(x_min=0.0, x_max=1.0, t_min=0.0, t_max=1.0, nx=100, n
 # Training function
 def train(model, n_epochs, x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f):
     # Define optimizer
-    optimizer = optim.Adam(model.parameters(), lr=5e-4)
-    # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
-    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
-    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
-    # optimizer = SophiaG(model.parameters(), lr=1e-4)
+    # optimizer = optim.Adam(model.parameters(), lr=5e-4)
+    # optimizer = optim.AdamW(model.parameters(), lr=5e-4)
+    # optimizer = optim.NAdam(model.parameters(), lr=5e-4)
+    # optimizer = optim.RAdam(model.parameters(), lr=5e-4)
+    optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
     losses = []

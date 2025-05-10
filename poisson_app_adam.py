@@ -210,9 +210,9 @@ def train_adam(model, inputs, n_epochs):
     x_domain, y_domain, x_boundary, y_boundary = inputs
     
     # Create optimizer
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    # optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
-    # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
+    optimizer = optim.NAdam(model.parameters(), lr=1e-3)
     # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
     # optimizer = SophiaG(model.parameters(), lr=1e-4)
     
@@ -312,7 +312,7 @@ def main():
     model = PINN().to(device)
 
     # Prepare input data
-    inputs = generate_training_data(n_points=800)
+    inputs = generate_training_data(n_points=1000)
 
     # Step 1: Use APP optimization algorithm
     print("Step 1: APP optimization...")
