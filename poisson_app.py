@@ -1,9 +1,3 @@
-"""
-APP Optimization.
-Two dimensional Poisson equation example. Solution given by
-
-u(x,y) = sin(pi*x) * sin(pi*y).
-"""
 import os
 
 import matplotlib.pyplot as plt

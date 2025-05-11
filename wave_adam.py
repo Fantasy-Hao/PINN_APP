@@ -197,7 +197,7 @@ def train(model, n_epochs, x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Iteration: {epoch}, Loss: {loss.item():.6e}')
+            print(f'Adam - Epoch: {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 

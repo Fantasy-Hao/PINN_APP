@@ -1,9 +1,3 @@
-"""
-APP Optimization.
-Heat equation example. Solution given by
-
-u(x,t) = sin(pi*x) * exp(-pi^2*t).
-"""
 import os
 
 import matplotlib.pyplot as plt

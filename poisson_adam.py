@@ -169,7 +169,7 @@ def train(model, inputs, n_epochs):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Epoch {epoch}, Loss: {loss.item():.6e}, PDE Loss: {loss_f.item():.6e}, BC Loss: {loss_bc.item():.6e}')
+            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 

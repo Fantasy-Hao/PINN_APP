@@ -8,7 +8,7 @@ import torch.optim as optim
 
 from sophia import SophiaG
 
-# Create logs directory if it doesn't exist
+# Create logs directory
 if not os.path.exists('./logs'):
     os.makedirs('./logs')
 
@@ -161,7 +161,7 @@ def train(model, inputs, n_epochs):
 
         # Print training progress
         if epoch % 1000 == 0:
-            print(f'Epoch {epoch}, Loss: {loss.item():.6e}')
+            print(f'Adam - Epoch {epoch}, Loss: {loss.item():.6e}')
 
     return losses
 
