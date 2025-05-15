@@ -11,8 +11,8 @@ from pyDOE import lhs
 from sophia import SophiaG
 
 # Create logs directory
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists('../logs'):
+    os.makedirs('../logs')
 
 # Set double precision
 torch.set_default_dtype(torch.float64)

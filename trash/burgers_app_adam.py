@@ -11,8 +11,8 @@ from sophia import SophiaG
 from utils import get_model_params, set_model_params
 
 # Create log directory
-if not os.path.exists('./logs'):
-    os.makedirs('./logs')
+if not os.path.exists('../logs'):
+    os.makedirs('../logs')
 
 # Set double precision
 torch.set_default_dtype(torch.float64)

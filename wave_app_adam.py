@@ -50,7 +50,7 @@ class PINN(nn.Module):
     def __init__(self, wave_speed=1.0):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 64, 1])
+        self.net = MLP([2, 32, 1])
         self.c = wave_speed  # Wave propagation speed
 
     def forward(self, x, t):
@@ -233,11 +233,11 @@ def train_adam(model, inputs, n_epochs):
     x_lb, t_lb, x_ub, t_ub, x_0, t_0, u_0, u_t_0, x_f, t_f = inputs
 
     # Define optimizer
-    # optimizer = optim.Adam(model.parameters(), lr=5e-4)
+    optimizer = optim.Adam(model.parameters(), lr=5e-4)
     # optimizer = optim.AdamW(model.parameters(), lr=5e-4)
     # optimizer = optim.NAdam(model.parameters(), lr=5e-4)
     # optimizer = optim.RAdam(model.parameters(), lr=5e-4)
-    optimizer = SophiaG(model.parameters(), lr=1e-4)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
     
     # Training loop
     losses = []
@@ -379,7 +379,7 @@ def main():
     adam_losses = train_adam(
         model,
         inputs=inputs,
-        n_epochs=20000
+        n_epochs=0
     )
     
     # Plot loss curve
