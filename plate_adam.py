@@ -5,10 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from scipy.stats import qmc, norm
 
 from sophia import SophiaG
-from utils import get_model_params, set_model_params
 
 # Create logs directory if it doesn't exist
 if not os.path.exists('./logs'):
@@ -285,93 +283,8 @@ def generate_training_data(n_points, Lx=2.0, Ly=1.0):
     return x_domain, y_domain, x_boundary_lr, y_boundary_lr, x_boundary_tb, y_boundary_tb
 
 
-def loss_fun(model, params, inputs, q=1000.0):
-    """Calculate loss for APP optimizer"""
-    # Unpack input data
-    x_domain, y_domain, x_boundary_lr, y_boundary_lr, x_boundary_tb, y_boundary_tb = inputs
-    
-    # Set model parameters
-    set_model_params(model, torch.tensor(params, dtype=torch.float64, device=device))
-    
-    # Calculate PDE residual loss
-    f_pred = model.f(x_domain, y_domain, q)
-    loss_pde = torch.mean(torch.square(f_pred))
-    
-    # Left-right boundary conditions (simply supported: w=0, ∂²w/∂x²=0)
-    w_lr = model(x_boundary_lr, y_boundary_lr)
-    
-    # Calculate ∂²w/∂x² for left-right boundaries
-    x_boundary_lr.requires_grad_(True)
-    y_boundary_lr.requires_grad_(True)
-    w_lr_grad = model(x_boundary_lr, y_boundary_lr)
-    w_x = torch.autograd.grad(
-        w_lr_grad, x_boundary_lr,
-        grad_outputs=torch.ones_like(w_lr_grad),
-        retain_graph=True,
-        create_graph=True
-    )[0]
-    w_xx = torch.autograd.grad(
-        w_x, x_boundary_lr,
-        grad_outputs=torch.ones_like(w_x),
-        retain_graph=True,
-        create_graph=True
-    )[0]
-    
-    loss_bc_lr = torch.mean(torch.square(w_lr)) + torch.mean(torch.square(w_xx))
-    
-    # Top-bottom boundary conditions (free edge: shear force=0, moment=0)
-    shear_tb = model.shear_force(x_boundary_tb, y_boundary_tb)
-    moment_tb = model.moment(x_boundary_tb, y_boundary_tb)
-    loss_bc_tb = torch.mean(torch.square(shear_tb)) + torch.mean(torch.square(moment_tb))
-    
-    # Total loss
-    loss = loss_pde + 10.0 * loss_bc_lr + 10.0 * loss_bc_tb
-    
-    return loss.item()
-
-
-# Train model using APP optimizer
-def train_app(model, inputs, K, lambda_, rho, n, q=1000.0):
-    params = get_model_params(model)
-    d = len(params)
-    xk = params.detach().cpu().numpy().astype(np.float64)
-    loss_history = []
-    alpha = lambda_
-
-    halton = qmc.Halton(d=d, scramble=True, seed=42)
-    fc = np.inf
-    for i in range(K):
-        # Generate n random vectors from Halton sequence
-        x = halton.random(n)
-        t = np.vstack([xk, norm.ppf(x, loc=xk, scale=1 / alpha)])
-
-        # Compute function value sequence
-        f = [loss_fun(model, t[k], inputs, q) for k in range(n + 1)]
-        fk = f[0]
-        f_min = min(f)
-        fc = min(fc, f_min)
-        f = np.array(f) - f_min
-
-        # Use averaged asymptotic formula
-        f_mean = np.mean(f)
-        if f_mean > 0:
-            f /= f_mean
-
-        # Compute weights and new xk
-        weights = np.exp(-f)
-        xk = np.average(t, axis=0, weights=weights)
-
-        # Update parameters and record
-        set_model_params(model, torch.tensor(xk, dtype=torch.float64, device=device))
-        alpha /= rho
-        loss_history.append(fk)
-        print(f'APP - Epoch {i + 1}, Loss: {fk:.6e}')
-
-    return loss_history
-
-
-# Training function using Adam optimizer
-def train_adam(model, inputs, n_epochs, q=1000.0):
+# Training function
+def train(model, inputs, n_epochs, q=1000.0, Lx=2.0, Ly=1.0):
     # Unpack input data
     x_domain, y_domain, x_boundary_lr, y_boundary_lr, x_boundary_tb, y_boundary_tb = inputs
 
@@ -495,35 +408,18 @@ def main():
     n_points = 2000
     inputs = generate_training_data(n_points, Lx, Ly)
 
-    # Step 1: Use APP optimization algorithm
-    print("Step 1: APP optimization...")
-    app_losses = train_app(
-        model,
-        inputs=inputs,
-        K=400,
-        lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
-        n=len(get_model_params(model)),
-        q=q
-    )
+    # Train model
+    print("Starting training...")
+    losses = train(model, inputs=inputs, n_epochs=20400, q=q, Lx=Lx, Ly=Ly)
 
-    # Step 2: Further training with Adam optimizer
-    print("Step 2: Further training with Adam optimizer...")
-    adam_losses = train_adam(
-        model,
-        inputs=inputs,
-        n_epochs=20000,
-        q=q
-    )
-    
     # Plot loss curve
     plt.figure(figsize=(10, 6))
-    plt.semilogy(app_losses + adam_losses)
+    plt.semilogy(losses)
     plt.title('Training Loss')
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss (log scale)')
+    plt.xlabel('Iterations')
+    plt.ylabel('Loss Value (Log Scale)')
     plt.grid(True)
-    plt.savefig('./logs/plate_app_bending_loss.png', dpi=300, bbox_inches='tight')
+    plt.savefig('./logs/plate_bending_loss.png', dpi=300)
     plt.show()
 
     # Evaluate model
