@@ -50,7 +50,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 64, 1])
+        self.net = MLP([2, 128, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -203,10 +203,10 @@ def train_adam(model, inputs, n_epochs):
     x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
 
     # Create optimizer
-    # optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
-    optimizer = optim.RAdam(model.parameters(), lr=1e-3)
+    # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
     # optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
@@ -311,16 +311,17 @@ def main():
     model = PINN().to(device)
 
     # Prepare input data
-    inputs = generate_training_data(n_points=1000)
+    inputs = generate_training_data(n_points=800)
+    print(len(get_model_params(model)))
 
     # Step 1: Use APP optimization algorithm
     print("Step 1: APP optimization...")
     app_losses = train_app(
         model,
         inputs=inputs,
-        K=400,
+        K=200,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.985,
+        rho=0.95,
         n=len(get_model_params(model))
     )
 

@@ -412,6 +412,12 @@ def main():
     print("Starting training...")
     losses = train(model, inputs=inputs, n_epochs=20400, q=q, Lx=Lx, Ly=Ly)
 
+    # Save losses to txt file
+    with open('./logs/plate_losses.txt', 'w') as f:
+        for i, loss in enumerate(losses):
+            f.write(f'{i}\t{loss:.6e}\n')
+    print("Losses saved to ./logs/plate_losses.txt")
+
     # Plot loss curve
     plt.figure(figsize=(10, 6))
     plt.semilogy(losses)

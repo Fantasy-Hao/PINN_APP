@@ -51,12 +51,16 @@ class PINN(nn.Module):
     def __init__(self, vis=0.001):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 32, 1])
+        self.net = MLP([2, 64, 1])
         self.vis = vis  # Viscosity coefficient
 
     def forward(self, x, t):
-        # Combine inputs into tensor
-        xt = torch.cat([x, t], dim=1)
+        # Normalize inputs: x from [-2,2] to [0,1], t from [0,2] to [0,1]
+        x_norm = (x + 2.0) / 4.0
+        t_norm = t / 2.0
+        
+        # Combine normalized inputs into tensor
+        xt = torch.cat([x_norm, t_norm], dim=1)
         return self.net(xt)
 
     def f(self, x, t):
@@ -67,28 +71,31 @@ class PINN(nn.Module):
         u = self.forward(x, t)
 
         # Calculate first derivative with respect to time
+        # Scale factor 1/2.0 for t normalization [0,2] -> [0,1]
         u_t = torch.autograd.grad(
             u, t,
             grad_outputs=torch.ones_like(u),
             retain_graph=True,
             create_graph=True
-        )[0]
+        )[0] / 2.0
 
         # Calculate first derivative with respect to x
+        # Scale factor 1/4.0 for x normalization [-2,2] -> [0,1]
         u_x = torch.autograd.grad(
             u, x,
             grad_outputs=torch.ones_like(u),
             retain_graph=True,
             create_graph=True
-        )[0]
+        )[0] / 4.0
 
         # Calculate second derivative with respect to x
+        # Additional scale factor 1/4.0 for second derivative
         u_xx = torch.autograd.grad(
             u_x, x,
             grad_outputs=torch.ones_like(u_x),
             retain_graph=True,
             create_graph=True
-        )[0]
+        )[0] / 4.0
 
         # Nonlinear equation: ∂u/∂t + u∂u/∂x - vis∂²u/∂x² = 0
         residual = u_t + u * u_x - self.vis * u_xx
@@ -189,11 +196,11 @@ def train_adam(model, inputs, n_epochs):
     x_domain, t_domain, x_initial, t_initial, u_initial = inputs
 
     # Define optimizer
-    # optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
     # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
-    optimizer = SophiaG(model.parameters(), lr=1e-4)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
     losses = []
@@ -312,9 +319,9 @@ def main():
     app_losses = train_app(
         model,
         inputs=inputs,
-        K=400,
+        K=200,
         lambda_=1 / np.sqrt(len(get_model_params(model))),
-        rho=0.98,
+        rho=0.95,
         n=len(get_model_params(model))
     )
 

@@ -516,6 +516,13 @@ def main():
         q=q
     )
     
+    # Save losses to txt file
+    all_losses = app_losses + adam_losses
+    with open('./logs/plate_app_losses.txt', 'w') as f:
+        for i, loss in enumerate(all_losses):
+            f.write(f'{i}\t{loss:.6e}\n')
+    print("Losses saved to ./logs/plate_app_losses.txt")
+
     # Plot loss curve
     plt.figure(figsize=(10, 6))
     plt.semilogy(app_losses + adam_losses)

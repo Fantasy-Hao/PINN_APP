@@ -48,7 +48,7 @@ class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
         # Define network structure: input 2 features (x,t), output 1 value (u)
-        self.net = MLP([2, 64, 1])
+        self.net = MLP([2, 128, 1])
         self.pi = torch.tensor(np.pi)
 
     def forward(self, x, t):
@@ -126,11 +126,11 @@ def train(model, inputs, n_epochs):
     x_domain, t_domain, x_initial, t_initial, x_boundary, t_boundary = inputs
 
     # Define optimizer
-    # optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     # optimizer = optim.NAdam(model.parameters(), lr=1e-3)
     # optimizer = optim.RAdam(model.parameters(), lr=1e-3)
-    optimizer = SophiaG(model.parameters(), lr=1e-4)
+    # optimizer = SophiaG(model.parameters(), lr=1e-4)
 
     # Training loop
     losses = []
@@ -234,7 +234,7 @@ def main():
     model = PINN().to(device)
 
     # Prepare input data
-    inputs = generate_training_data(n_points=1000)
+    inputs = generate_training_data(n_points=800)
 
     # Train model
     print("Starting training...")
